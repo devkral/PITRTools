@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """
 Uses rsync to sync files in parallel between a source and destination.
@@ -50,9 +50,10 @@ command again, but we exclude the files that were already synced; directories,
 symlinks, etc. are synced in this final (non-threaded) call.
 """
 
-import optparse, re, subprocess, sys, tempfile, thread, time
+import optparse, re, subprocess, sys, tempfile, time
 from threading import Thread
-from Queue import Queue
+from queue import Queue
+import multiprocessing
 
 class rsync_in_parallel(object):
     """Main class for managing parallel rsyncs"""
@@ -81,7 +82,7 @@ class rsync_in_parallel(object):
         # we run the user's rsync command, but we add two flags:
         #   --dry-run --itemize-changes
         # this allows us to find files that need to be transferred
-        p = subprocess.Popen(self.rsync_cmd + " --dry-run --itemize-changes", shell=True, stdout=subprocess.PIPE)
+        p = subprocess.Popen(self.rsync_cmd + " --dry-run --itemize-changes", shell=True, stdout=subprocess.PIPE, universal_newlines=True)
         out = p.stdout.readlines()
         # see the rsync man page docs for a complete description of the --itemize-changes output
         # to make sense of the regular expression below; we are looking to transfer files
@@ -102,28 +103,28 @@ class rsync_in_parallel(object):
                 #print "MATCH:" + file_path
 
         if len(self.file_list) == 0:
-            print "WARN: no files will be transferred in parallel; check the output of --dry-run --itemize-changes with your rsync command to verify"
+            print("WARN: no files will be transferred in parallel; check the output of --dry-run --itemize-changes with your rsync command to verify")
 
     def _launcher(self, i):
         """Spawns an rsync process to update/sync a single file"""
         while True:
             file_path = self.queue.get()
             if self.debug:
-                print "Thread %s: %s" % (i, file_path)
+                print("Thread %s: %s" % (i, file_path))
 
             # take the users's rsync command but use --files-from to just send a specific file
             # (parent directories of the file will be created automatically if they are needed)
-            temp = tempfile.NamedTemporaryFile()
+            temp = tempfile.NamedTemporaryFile(mode='w+')
             temp.write(file_path)
             temp.flush()
 
             cmd = "%s --files-from=%s" % (self.rsync_cmd, temp.name)
             if self.debug:
-                print "CALLING:" + cmd
+                print("CALLING:" + cmd)
 
             ret = subprocess.call(cmd, shell=True)
             if ret != 0:
-                print "WARN: could not transfer %s, rsync failed with error code=%s; continuing..." % (file_path, ret)
+                print("WARN: could not transfer %s, rsync failed with error code=%s; continuing..." % (file_path, ret))
 
             temp.close()
             self.queue.task_done()
@@ -145,17 +146,17 @@ class rsync_in_parallel(object):
         # we could just issue the original command, but it will be faster to
         # explicitly --exclude-from the files we already transferred (especially
         # when --checksum is used in the original command)
-        temp = tempfile.NamedTemporaryFile()
+        temp = tempfile.NamedTemporaryFile(mode='w+')
         for file_path in self.file_list:
             temp.write(file_path + "\n")
         temp.flush()
         cmd = "%s --exclude-from=%s" % (self.rsync_cmd, temp.name)
 
         if (self.debug):
-            print "Calling final rsync:" + cmd
+            print("Calling final rsync:" + cmd)
         ret = subprocess.call(cmd, shell=True)
         if ret != 0:
-            print "WARN: potential problem with final rsync call, rsync failed with error code=%s" % ret
+            print("WARN: potential problem with final rsync call, rsync failed with error code=%s" % ret)
 
         temp.close()
         return ret
@@ -167,14 +168,14 @@ if __name__ == "__main__":
         version="0.1",
         usage="%prog <rsync command>")
 
-    p.add_option('--num_threads', '-n', type="int", help="the number of spawned rsync file copy threads", default=2)
+    p.add_option('--num_threads', '-n', type="int", help="the number of spawned rsync file copy threads", default=multiprocessing.cpu_count())
     p.add_option('--debug', '-d', help="enable debugging output", action="store_true", default=False)
 
     options, arguments = p.parse_args()
 
     if options.debug:
-        print arguments
-        print options
+        print(arguments)
+        print(options)
 
     if len(arguments) != 1:
         #print __doc__
